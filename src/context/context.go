@@ -158,6 +158,7 @@ var Canceled = errors.New("context canceled")
 
 // DeadlineExceeded is the error returned by Context.Err when the context's
 // deadline passes.
+// 当上下文的截止日期过去时错误定义
 var DeadlineExceeded error = deadlineExceededError{}
 
 type deadlineExceededError struct{}
@@ -166,6 +167,7 @@ func (deadlineExceededError) Error() string   { return "context deadline exceede
 func (deadlineExceededError) Timeout() bool   { return true }
 func (deadlineExceededError) Temporary() bool { return true }
 
+// 空上下文实现Context接口
 // An emptyCtx is never canceled, has no values, and has no deadline. It is not
 // struct{}, since vars of this type must have distinct addresses.
 type emptyCtx int
@@ -196,6 +198,7 @@ func (e *emptyCtx) String() string {
 	return "unknown empty Context"
 }
 
+// 全局空上下文赋值
 var (
 	background = new(emptyCtx)
 	todo       = new(emptyCtx)
@@ -247,6 +250,8 @@ func newCancelCtx(parent Context) cancelCtx {
 var goroutines int32
 
 // propagateCancel arranges for child to be canceled when parent is.
+// 如果父进程取消，则安排子进程取消
+// 构建父子ctx级联关系，
 func propagateCancel(parent Context, child canceler) {
 	done := parent.Done()
 	if done == nil {
@@ -262,6 +267,7 @@ func propagateCancel(parent Context, child canceler) {
 	}
 
 	if p, ok := parentCancelCtx(parent); ok {
+		// 将当前新创建的ctx保存到其父级的children里，构建了一个多叉树的结构
 		p.mu.Lock()
 		if p.err != nil {
 			// parent has already been canceled
@@ -274,6 +280,8 @@ func propagateCancel(parent Context, child canceler) {
 		}
 		p.mu.Unlock()
 	} else {
+		// 如果父ctx不存在cancelCtx类型，则创建一个协程监听父子ctx的取消操作
+		// 总会有一个父ctx不是cancelCtx类型，这个ctx就是级联取消的根，负责监听取消操作并级联取消子ctx
 		atomic.AddInt32(&goroutines, +1)
 		go func() {
 			select {
@@ -286,6 +294,7 @@ func propagateCancel(parent Context, child canceler) {
 }
 
 // &cancelCtxKey is the key that a cancelCtx returns itself for.
+// 进程启动时分配一个唯一地址，代表cancelCtx本身
 var cancelCtxKey int
 
 // parentCancelCtx returns the underlying *cancelCtx for parent.
@@ -294,15 +303,23 @@ var cancelCtxKey int
 // parent.Done() matches that *cancelCtx. (If not, the *cancelCtx
 // has been wrapped in a custom implementation providing a
 // different done channel, in which case we should not bypass it.)
+// 返回父级的ctx具体实现
+// 如果父级ctx已经被取消、或者是emptyCtx类型（没有级联取消功能的上下文），则返回false
+// 如果存在属于cancelCtx类型的父级，则返回父级的ctx具体实现，否则返回false
 func parentCancelCtx(parent Context) (*cancelCtx, bool) {
+	// 找到最近一个实现了Done方法的ctx
 	done := parent.Done()
 	if done == closedchan || done == nil {
 		return nil, false
 	}
+	// 找到最近一个cancelCtx类型的上下文
 	p, ok := parent.Value(&cancelCtxKey).(*cancelCtx)
 	if !ok {
 		return nil, false
 	}
+	// 通过done值来判断是否为同一ctx
+	// 如果最近一个实现了Done方法的ctx与最近一个cancelCtx类型的ctx不是同一个，则返回false，不加入父级的children
+	// 也就是说，如果自定义ctx类型覆盖了父级的Done方法，那么就不能与上层的ctx建立父子关系
 	pdone, _ := p.done.Load().(chan struct{})
 	if pdone != done {
 		return nil, false
@@ -311,6 +328,7 @@ func parentCancelCtx(parent Context) (*cancelCtx, bool) {
 }
 
 // removeChild removes a context from its parent.
+// 删除子ctx
 func removeChild(parent Context, child canceler) {
 	p, ok := parentCancelCtx(parent)
 	if !ok {
@@ -325,6 +343,7 @@ func removeChild(parent Context, child canceler) {
 
 // A canceler is a context type that can be canceled directly. The
 // implementations are *cancelCtx and *timerCtx.
+// 可取消上下文接口定义
 type canceler interface {
 	cancel(removeFromParent bool, err error)
 	Done() <-chan struct{}
@@ -340,6 +359,7 @@ func init() {
 // A cancelCtx can be canceled. When canceled, it also cancels any children
 // that implement canceler.
 type cancelCtx struct {
+	// 父级上下文
 	Context
 
 	mu       sync.Mutex            // protects following fields
@@ -348,6 +368,9 @@ type cancelCtx struct {
 	err      error                 // set to non-nil by the first cancel call
 }
 
+// Value
+// 如果查询的key为&cancelCtxKey，则表示调用者需要的是自己的指针
+// 否则使用value函数，逐级向上查询key对应的value
 func (c *cancelCtx) Value(key any) any {
 	if key == &cancelCtxKey {
 		return c
@@ -355,6 +378,7 @@ func (c *cancelCtx) Value(key any) any {
 	return value(c.Context, key)
 }
 
+// Done 初始化并返回done
 func (c *cancelCtx) Done() <-chan struct{} {
 	d := c.done.Load()
 	if d != nil {
@@ -394,6 +418,9 @@ func (c *cancelCtx) String() string {
 
 // cancel closes c.done, cancels each of c's children, and, if
 // removeFromParent is true, removes c from its parent's children.
+// 取消函数
+// 先关闭done通道(done一旦关闭，所有<-ctx.Done()将解除阻塞)，然后调用子ctx的取消函数，最后通过参数判断是否将自身从父级ctx中删除
+// 目前只有使用WithCancel才会将自己摘除，取消子ctx时不会解除关联关系
 func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 	if err == nil {
 		panic("context: internal error: missing cancel error")
@@ -431,10 +458,12 @@ func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 //
 // Canceling this context releases resources associated with it, so code should
 // call cancel as soon as the operations running in this Context complete.
+// 使用time.AfterFunc延迟调用cancel
 func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
 	if parent == nil {
 		panic("cannot create context from nil parent")
 	}
+	// 父级ctx在子ctx之前过期，返回cancel方法就行，不用延迟取消了，因为父级会级联取消子ctx
 	if cur, ok := parent.Deadline(); ok && cur.Before(d) {
 		// The current deadline is already sooner than the new one.
 		return WithCancel(parent)
@@ -462,6 +491,7 @@ func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
 // A timerCtx carries a timer and a deadline. It embeds a cancelCtx to
 // implement Done and Err. It implements cancel by stopping its timer then
 // delegating to cancelCtx.cancel.
+// 在cancelCtx的基础上加上一个定时器，
 type timerCtx struct {
 	cancelCtx
 	timer *time.Timer // Under cancelCtx.mu.
@@ -479,6 +509,7 @@ func (c *timerCtx) String() string {
 		time.Until(c.deadline).String() + "])"
 }
 
+// 在cancelCtx的基础上再进行timer的关闭
 func (c *timerCtx) cancel(removeFromParent bool, err error) {
 	c.cancelCtx.cancel(false, err)
 	if removeFromParent {
@@ -535,6 +566,7 @@ func WithValue(parent Context, key, val any) Context {
 
 // A valueCtx carries a key-value pair. It implements Value for that key and
 // delegates all other calls to the embedded Context.
+// 包一层k、v
 type valueCtx struct {
 	Context
 	key, val any
@@ -566,6 +598,11 @@ func (c *valueCtx) Value(key any) any {
 	return value(c.Context, key)
 }
 
+// 从上下文中取出key对应的value
+// 如果是valueCtx，先比对自身的value，如果不等则查询父级
+// 如果是cancelCtx，timerCtx ，则先比对key是否是cancelCtxKey，如果不是则查询父级ctx
+// 如果是emptyCtx，直接返回nil，没有值
+// 如果是自定义的ctx，则调用自定义的Value函数
 func value(c Context, key any) any {
 	for {
 		switch ctx := c.(type) {
