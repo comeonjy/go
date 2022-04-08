@@ -154,11 +154,12 @@ type Context interface {
 }
 
 // Canceled is the error returned by Context.Err when the context is canceled.
+// 当Context被主动取消时的错误定义
 var Canceled = errors.New("context canceled")
 
 // DeadlineExceeded is the error returned by Context.Err when the context's
 // deadline passes.
-// 当上下文的截止日期过去时错误定义
+// 当上下文到达截止日期cancel时的错误定义
 var DeadlineExceeded error = deadlineExceededError{}
 
 type deadlineExceededError struct{}
@@ -167,7 +168,7 @@ func (deadlineExceededError) Error() string   { return "context deadline exceede
 func (deadlineExceededError) Timeout() bool   { return true }
 func (deadlineExceededError) Temporary() bool { return true }
 
-// 空上下文实现Context接口
+// emptyCtx实现Context接口
 // An emptyCtx is never canceled, has no values, and has no deadline. It is not
 // struct{}, since vars of this type must have distinct addresses.
 type emptyCtx int
@@ -198,7 +199,7 @@ func (e *emptyCtx) String() string {
 	return "unknown empty Context"
 }
 
-// 全局空上下文赋值
+// 默认上下文
 var (
 	background = new(emptyCtx)
 	todo       = new(emptyCtx)
@@ -251,13 +252,15 @@ var goroutines int32
 
 // propagateCancel arranges for child to be canceled when parent is.
 // 如果父进程取消，则安排子进程取消
-// 构建父子ctx级联关系，
+// 构建父子ctx级联关系
 func propagateCancel(parent Context, child canceler) {
+	// 如果父上下文不具备取消功能（done==nil），就直接返回cancelCtx和cancel()回调函数
 	done := parent.Done()
 	if done == nil {
 		return // parent is never canceled
 	}
 
+	// 如果父上下文已经被取消，就取消掉当前上下文（cancelCtx）然后返回
 	select {
 	case <-done:
 		// parent is already canceled
@@ -267,7 +270,7 @@ func propagateCancel(parent Context, child canceler) {
 	}
 
 	if p, ok := parentCancelCtx(parent); ok {
-		// 将当前新创建的ctx保存到其父级的children里，构建了一个多叉树的结构
+		// 如果父上下文底层存在cancelCtx类型，将当前新创建的ctx保存到父上下文底层cancelCtx类型的children里
 		p.mu.Lock()
 		if p.err != nil {
 			// parent has already been canceled
@@ -303,23 +306,39 @@ var cancelCtxKey int
 // parent.Done() matches that *cancelCtx. (If not, the *cancelCtx
 // has been wrapped in a custom implementation providing a
 // different done channel, in which case we should not bypass it.)
-// 返回父级的ctx具体实现
+
+// 返回父级的底层cancelCtx具体实现
 // 如果父级ctx已经被取消、或者是emptyCtx类型（没有级联取消功能的上下文），则返回false
 // 如果存在属于cancelCtx类型的父级，则返回父级的ctx具体实现，否则返回false
 func parentCancelCtx(parent Context) (*cancelCtx, bool) {
-	// 找到最近一个实现了Done方法的ctx
+	// 查找父上下文最近一个实现了Done方法的底层上下文，包括父上下文自己，如果已经取消或不具备取消功能（done==nil），则返回false
 	done := parent.Done()
 	if done == closedchan || done == nil {
 		return nil, false
 	}
-	// 找到最近一个cancelCtx类型的上下文
+	// 查找父上下文最近一个cancelCtx类型的底层上下文，包括父上下文自己
 	p, ok := parent.Value(&cancelCtxKey).(*cancelCtx)
 	if !ok {
 		return nil, false
 	}
-	// 通过done值来判断是否为同一ctx
-	// 如果最近一个实现了Done方法的ctx与最近一个cancelCtx类型的ctx不是同一个，则返回false，不加入父级的children
-	// 也就是说，如果自定义ctx类型覆盖了父级的Done方法，那么就不能与上层的ctx建立父子关系
+	// 通过done值来判断是否为同一上下文
+	// 如果最近一个实现了Done方法的底层上下文与最近一个cancelCtx类型的底层上下文不是同一个，则返回false，不加入父级的children
+	// 也就是说，如果自定义Context类型覆盖了父级的Done方法并且返回了非空的done，就返回false创建一个协程监听父上下文和当前创建的cancelCtx的取消操作
+	// 因为自定义Context类型没办法将自己放入自己的cancelCtx类型父上下文的children集合里，无法保证级联取消的连续性，所以这里需要创建一个协程来监听父子上下文。
+	// 对于这种自定义类型的父上下文，每创建一个直接关联的子上下文就会启动一个协程监听done
+	//		func main() {
+	//			ctx1, _ := context.WithCancel(context.Background())
+	//			ctx2 := &MyCtx{ctx1}
+	//			_, _ = context.WithCancel(ctx2)
+	//			_, _ = context.WithCancel(ctx3)
+	//			<-make(chan struct{})
+	//		}
+	//		type MyCtx struct {context.Context}
+	//		var done = make(<-chan struct{})
+	//		func (*MyCtx) Done() <-chan struct{} {
+	//			return done
+	//		}
+	//
 	pdone, _ := p.done.Load().(chan struct{})
 	if pdone != done {
 		return nil, false
@@ -458,7 +477,7 @@ func (c *cancelCtx) cancel(removeFromParent bool, err error) {
 //
 // Canceling this context releases resources associated with it, so code should
 // call cancel as soon as the operations running in this Context complete.
-// 使用time.AfterFunc延迟调用cancel
+// 使用time.AfterFunc定时调用cancel
 func WithDeadline(parent Context, d time.Time) (Context, CancelFunc) {
 	if parent == nil {
 		panic("cannot create context from nil parent")
