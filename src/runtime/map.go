@@ -131,7 +131,8 @@ type hmap struct {
 	buckets unsafe.Pointer // array of 2^B Buckets. may be nil if count==0.
 	// 扩容时保存老的哈希桶数组
 	oldbuckets unsafe.Pointer // previous bucket array of half the size, non-nil only when growing
-	nevacuate  uintptr        // progress counter for evacuation (buckets less than this have been evacuated)
+	// 搬迁进度
+	nevacuate uintptr // progress counter for evacuation (buckets less than this have been evacuated)
 
 	extra *mapextra // optional fields
 }
@@ -170,7 +171,7 @@ type bmap struct {
 	// us to eliminate padding which would be needed for, e.g., map[int64]int8.
 	// Followed by an overflow pointer.
 
-	// 隐藏的内存布局，将keys和values分别打包，通过指针运算快速找到对应的值
+	// 隐藏的内存布局，编译期间动态新增的字段，将keys和values分别打包，通过指针运算快速找到对应的值
 	// pad用于内存填充，overflow指向溢出桶的地址
 	// keys     [8]keytype
 	// values   [8]valuetype
@@ -477,10 +478,13 @@ bucketloop:
 				}
 				continue
 			}
+			// tophash匹配，定位到key的位置
 			k := add(unsafe.Pointer(b), dataOffset+i*uintptr(t.keysize))
+			// 如果是指针就解引用
 			if t.indirectkey() {
 				k = *((*unsafe.Pointer)(k))
 			}
+			// key相等就返回value
 			if t.key.equal(key, k) {
 				e := add(unsafe.Pointer(b), dataOffset+bucketCnt*uintptr(t.keysize)+i*uintptr(t.elemsize))
 				if t.indirectelem() {
@@ -651,6 +655,7 @@ func mapassign(t *maptype, h *hmap, key unsafe.Pointer) unsafe.Pointer {
 
 again:
 	bucket := hash & bucketMask(h.B)
+	// 如果正在扩容，则搬迁当前bucket
 	if h.growing() {
 		growWork(t, h, bucket)
 	}
@@ -664,6 +669,7 @@ bucketloop:
 	for {
 		for i := uintptr(0); i < bucketCnt; i++ {
 			if b.tophash[i] != top {
+				// 如果tophash为空，则取出地址用于后续写入
 				if isEmpty(b.tophash[i]) && inserti == nil {
 					inserti = &b.tophash[i]
 					insertk = add(unsafe.Pointer(b), dataOffset+i*uintptr(t.keysize))
@@ -682,6 +688,7 @@ bucketloop:
 				continue
 			}
 			// already have a mapping for key. Update it.
+			// 存在值就更新
 			if t.needkeyupdate() {
 				typedmemmove(t.key, k, key)
 			}
@@ -1173,12 +1180,14 @@ func (h *hmap) oldbucketmask() uintptr {
 	return h.noldbuckets() - 1
 }
 
+// 搬迁指定bucket
 func growWork(t *maptype, h *hmap, bucket uintptr) {
 	// make sure we evacuate the oldbucket corresponding
 	// to the bucket we're about to use
 	evacuate(t, h, bucket&h.oldbucketmask())
 
 	// evacuate one more oldbucket to make progress on growing
+	// 再搬迁一个bucket
 	if h.growing() {
 		evacuate(t, h, h.nevacuate)
 	}
@@ -1228,6 +1237,7 @@ func evacuate(t *maptype, h *hmap, oldbucket uintptr) {
 			for i := 0; i < bucketCnt; i, k, e = i+1, add(k, uintptr(t.keysize)), add(e, uintptr(t.elemsize)) {
 				top := b.tophash[i]
 				if isEmpty(top) {
+					// 标识为已搬迁
 					b.tophash[i] = evacuatedEmpty
 					continue
 				}
@@ -1278,11 +1288,13 @@ func evacuate(t *maptype, h *hmap, oldbucket uintptr) {
 					dst.e = add(dst.k, bucketCnt*uintptr(t.keysize))
 				}
 				dst.b.tophash[dst.i&(bucketCnt-1)] = top // mask dst.i as an optimization, to avoid a bounds check
+				// 复制key
 				if t.indirectkey() {
 					*(*unsafe.Pointer)(dst.k) = k2 // copy pointer
 				} else {
 					typedmemmove(t.key, dst.k, k) // copy elem
 				}
+				// 复制value
 				if t.indirectelem() {
 					*(*unsafe.Pointer)(dst.e) = *(*unsafe.Pointer)(e)
 				} else {
