@@ -6086,15 +6086,22 @@ func sync_atomic_runtime_procUnpin() {
 // Active spinning for sync.Mutex.
 //go:linkname sync_runtime_canSpin sync.runtime_canSpin
 //go:nosplit
+// 自旋条件：自旋次数少于4次，cpu核心数大于1，至少一个其他的运行中的P，本地P队列为空
 func sync_runtime_canSpin(i int) bool {
 	// sync.Mutex is cooperative, so we are conservative with spinning.
 	// Spin only few times and only if running on a multicore machine and
 	// GOMAXPROCS>1 and there is at least one other running P and local runq is empty.
 	// As opposed to runtime mutex we don't do passive spinning here,
 	// because there can be work on global runq or on other Ps.
+	// gomaxprocs <= int32(sched.npidle+sched.nmspinning)+1 至少一个其他的运行中的P
+	// sched.npidle（空闲P数量），sched.nmspinning（自旋M数量），1（表示当前P）
+	// gomaxprocs - （ sched.npidle + 1 ） ：其他运行中P数量
+	// gomaxprocs <= int32(sched.npidle)+1 ：其他运行中P数量<=0
+	// 加上sched.nmspinning自旋中的M数量是因为自旋的M被唤醒时会去获取P，为了保证唤醒后能直接获取到P，需要为其准备等量的运行中的P（我的推测，待证实）
 	if i >= active_spin || ncpu <= 1 || gomaxprocs <= int32(sched.npidle+sched.nmspinning)+1 {
 		return false
 	}
+	// 本地P队列为空
 	if p := getg().m.p.ptr(); !runqempty(p) {
 		return false
 	}

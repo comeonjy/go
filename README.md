@@ -3,7 +3,7 @@
 - [x] context [context/context]
 - [x] map [runtime/map]
 - [x] chan [runtime/chan]
+- [ ] mutex [sync/mutex]
 - [ ] errors
-- [ ] sync
 - [ ] net
 - [ ] io
