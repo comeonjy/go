@@ -413,6 +413,14 @@ func gcAssistAlloc(gp *g) {
 
 	traced := false
 retry:
+	if go119MemoryLimitSupport && gcCPULimiter.limiting() {
+		// If the CPU limiter is enabled, intentionally don't
+		// assist to reduce the amount of CPU time spent in the GC.
+		if traced {
+			traceGCMarkAssistDone()
+		}
+		return
+	}
 	// Compute the amount of scan work we need to do to make the
 	// balance positive. When the required amount of work is low,
 	// we over-assist to build up credit for future allocations
@@ -581,12 +589,14 @@ func gcAssistAlloc1(gp *g, scanWork int64) {
 		// a valid pointer).
 		gp.param = unsafe.Pointer(gp)
 	}
-	duration := nanotime() - startTime
+	now := nanotime()
+	duration := now - startTime
 	_p_ := gp.m.p.ptr()
 	_p_.gcAssistTime += duration
 	if _p_.gcAssistTime > gcAssistTimeSlack {
-		atomic.Xaddint64(&gcController.assistTime, _p_.gcAssistTime)
+		assistTime := gcController.assistTime.Add(_p_.gcAssistTime)
 		_p_.gcAssistTime = 0
+		gcCPULimiter.update(assistTime+mheap_.pages.scav.assistTime.Load(), now)
 	}
 }
 
@@ -888,6 +898,7 @@ func scanstack(gp *g, gcw *gcWork) int64 {
 }
 
 // Scan a stack frame: local variables and function arguments/results.
+//
 //go:nowritebarrier
 func scanframeworker(frame *stkframe, state *stackScanState, gcw *gcWork) {
 	if _DebugGC > 1 && frame.continpc != 0 {
@@ -1185,6 +1196,7 @@ func gcDrainN(gcw *gcWork, scanWork int64) int64 {
 // gcw.bytesMarked or gcw.heapScanWork.
 //
 // If stk != nil, possible stack pointers are also reported to stk.putPtr.
+//
 //go:nowritebarrier
 func scanblock(b0, n0 uintptr, ptrmask *uint8, gcw *gcWork, stk *stackScanState) {
 	// Use local copies of original parameters, so that a stack trace
@@ -1413,6 +1425,7 @@ func scanConservative(b, n uintptr, ptrmask *uint8, gcw *gcWork, state *stackSca
 // Shade the object if it isn't already.
 // The object is not nil and known to be in the heap.
 // Preemption must be disabled.
+//
 //go:nowritebarrier
 func shade(b uintptr) {
 	if obj, span, objIndex := findObject(b, 0, 0); obj != 0 {

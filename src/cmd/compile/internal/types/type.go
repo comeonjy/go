@@ -21,12 +21,6 @@ type Object interface {
 	Type() *Type
 }
 
-// A TypeObject is an Object representing a named type.
-type TypeObject interface {
-	Object
-	TypeDefn() *Type // for "type T Defn", returns Defn
-}
-
 //go:generate stringer -type Kind -trimprefix T type.go
 
 // Kind describes a kind of type.
@@ -492,9 +486,9 @@ type Slice struct {
 
 // A Field is a (Sym, Type) pairing along with some other information, and,
 // depending on the context, is used to represent:
-//  - a field in a struct
-//  - a method in an interface or associated with a named type
-//  - a function parameter
+//   - a field in a struct
+//   - a method in an interface or associated with a named type
+//   - a function parameter
 type Field struct {
 	flags bitset8
 
@@ -1121,9 +1115,10 @@ func (t *Type) SimpleString() string {
 }
 
 // Cmp is a comparison between values a and b.
-//  -1 if a < b
-//   0 if a == b
-//   1 if a > b
+//
+//	-1 if a < b
+//	 0 if a == b
+//	 1 if a > b
 type Cmp int8
 
 const (
@@ -1721,7 +1716,7 @@ var (
 // type should be set later via SetUnderlying(). References to the type are
 // maintained until the type is filled in, so those references can be updated when
 // the type is complete.
-func NewNamed(obj TypeObject) *Type {
+func NewNamed(obj Object) *Type {
 	t := newType(TFORW)
 	t.sym = obj.Sym()
 	t.nod = obj

@@ -31,7 +31,7 @@ import (
 //
 // The general syntax of a rule is:
 //
-//		a, b < c, d;
+//	a, b < c, d;
 //
 // which means c and d come after a and b in the partial order
 // (that is, c and d can import a and b),
@@ -39,12 +39,12 @@ import (
 //
 // The rules can chain together, as in:
 //
-//		e < f, g < h;
+//	e < f, g < h;
 //
 // which is equivalent to
 //
-//		e < f, g;
-//		f, g < h;
+//	e < f, g;
+//	f, g < h;
 //
 // Except for the special bottom element "NONE", each name
 // must appear exactly once on the right-hand side of a rule.
@@ -56,7 +56,7 @@ import (
 //
 // Negative assertions double-check the partial order:
 //
-//		i !< j
+//	i !< j
 //
 // means that it must NOT be the case that i < j.
 // Negative assertions may appear anywhere in the rules,
@@ -203,15 +203,10 @@ var depsRules = `
 
 	log !< FMT;
 
-	OS, FMT
-	< internal/execabs;
-
-	OS, internal/execabs
-	< internal/goroot;
-
 	# Misc packages needing only FMT.
 	FMT
 	< html,
+	  internal/goroot,
 	  mime/quotedprintable,
 	  net/internal/socktest,
 	  net/url,
@@ -288,13 +283,13 @@ var depsRules = `
 	< go/parser;
 
 	FMT
-	< go/build/constraint;
+	< go/build/constraint, go/doc/comment;
 
-	go/build/constraint, go/parser, text/tabwriter
+	go/build/constraint, go/doc/comment, go/parser, text/tabwriter
 	< go/printer
 	< go/format;
 
-	go/parser, internal/lazyregexp, text/template
+	go/doc/comment, go/parser, internal/lazyregexp, text/template
 	< go/doc;
 
 	math/big, go/token
@@ -397,17 +392,27 @@ var depsRules = `
 	NET, log
 	< net/mail;
 
+	NONE < crypto/internal/boring/sig, crypto/internal/boring/syso;
+	sync/atomic < crypto/internal/boring/fipstls;
+	crypto/internal/boring/sig, crypto/internal/boring/fipstls < crypto/tls/fipsonly;
+
 	# CRYPTO is core crypto algorithms - no cgo, fmt, net.
 	# Unfortunately, stuck with reflect via encoding/binary.
-	encoding/binary, golang.org/x/sys/cpu, hash
+	crypto/internal/boring/sig,
+	crypto/internal/boring/syso,
+	encoding/binary,
+	golang.org/x/sys/cpu,
+	hash, embed
 	< crypto
 	< crypto/subtle
 	< crypto/internal/subtle
-	< crypto/elliptic/internal/fiat
-	< crypto/elliptic/internal/nistec
-	< crypto/ed25519/internal/edwards25519/field, golang.org/x/crypto/curve25519/internal/field
-	< crypto/ed25519/internal/edwards25519
+	< crypto/internal/nistec/fiat
+	< crypto/internal/nistec
+	< crypto/internal/edwards25519/field, golang.org/x/crypto/curve25519/internal/field
+	< crypto/internal/edwards25519
 	< crypto/cipher
+	< crypto/internal/boring
+	< crypto/boring
 	< crypto/aes, crypto/des, crypto/hmac, crypto/md5, crypto/rc4,
 	  crypto/sha1, crypto/sha256, crypto/sha512
 	< CRYPTO;
@@ -416,8 +421,9 @@ var depsRules = `
 
 	# CRYPTO-MATH is core bignum-based crypto - no cgo, net; fmt now ok.
 	CRYPTO, FMT, math/big, embed
-	< crypto/rand
+	< crypto/internal/boring/bbig
 	< crypto/internal/randutil
+	< crypto/rand
 	< crypto/ed25519
 	< encoding/asn1
 	< golang.org/x/crypto/cryptobyte/asn1
@@ -437,13 +443,15 @@ var depsRules = `
 	< golang.org/x/crypto/chacha20poly1305
 	< golang.org/x/crypto/hkdf
 	< crypto/x509/internal/macos
-	< crypto/x509/pkix
+	< crypto/x509/pkix;
+
+	crypto/internal/boring/fipstls, crypto/x509/pkix
 	< crypto/x509
 	< crypto/tls;
 
 	# crypto-aware packages
 
-	CRYPTO, DEBUG, go/build, go/types, text/scanner
+	DEBUG, go/build, go/types, text/scanner, crypto/md5
 	< internal/pkgbits
 	< go/internal/gcimporter, go/internal/gccgoimporter, go/internal/srcimporter
 	< go/importer;
@@ -641,6 +649,9 @@ func findImports(pkg string) ([]string, error) {
 	}
 	var imports []string
 	var haveImport = map[string]bool{}
+	if pkg == "crypto/internal/boring" {
+		haveImport["C"] = true // kludge: prevent C from appearing in crypto/internal/boring imports
+	}
 	fset := token.NewFileSet()
 	for _, file := range files {
 		name := file.Name()

@@ -87,7 +87,7 @@ func (check *Checker) op(m opPredicates, x *operand, op token.Token) bool {
 // overflow checks that the constant x is representable by its type.
 // For untyped constants, it checks that the value doesn't become
 // arbitrarily large.
-func (check *Checker) overflow(x *operand, op token.Token, opPos token.Pos) {
+func (check *Checker) overflow(x *operand, opPos token.Pos) {
 	assert(x.mode == constant_)
 
 	if x.val.Kind() == constant.Unknown {
@@ -115,8 +115,8 @@ func (check *Checker) overflow(x *operand, op token.Token, opPos token.Pos) {
 	}
 }
 
-// opName returns the name of an operation, or the empty string.
-// Only operations that might overflow are handled.
+// opName returns the name of the operation if x is an operation
+// that might overflow; otherwise it returns the empty string.
 func opName(e ast.Expr) string {
 	switch e := e.(type) {
 	case *ast.BinaryExpr:
@@ -195,6 +195,12 @@ func (check *Checker) unary(x *operand, e *ast.UnaryExpr) {
 		x.typ = ch.elem
 		check.hasCallOrRecv = true
 		return
+
+	case token.TILDE:
+		// Provide a better error position and message than what check.op below could do.
+		check.error(e, _UndefinedOp, "cannot use ~ outside of interface or type constraint")
+		x.mode = invalid
+		return
 	}
 
 	if !check.op(unaryOpPredicates, x, e.Op) {
@@ -213,7 +219,7 @@ func (check *Checker) unary(x *operand, e *ast.UnaryExpr) {
 		}
 		x.val = constant.UnaryOp(e.Op, x.val, prec)
 		x.expr = e
-		check.overflow(x, e.Op, x.Pos())
+		check.overflow(x, x.Pos())
 		return
 	}
 
@@ -934,28 +940,28 @@ func (check *Checker) shift(x, y *operand, e ast.Expr, op token.Token) {
 				return
 			}
 		}
-	}
-
-	// Check that RHS is otherwise at least of integer type.
-	switch {
-	case allInteger(y.typ):
-		if !allUnsigned(y.typ) && !check.allowVersion(check.pkg, 1, 13) {
-			check.invalidOp(y, _InvalidShiftCount, "signed shift count %s requires go1.13 or later", y)
+	} else {
+		// Check that RHS is otherwise at least of integer type.
+		switch {
+		case allInteger(y.typ):
+			if !allUnsigned(y.typ) && !check.allowVersion(check.pkg, 1, 13) {
+				check.invalidOp(y, _InvalidShiftCount, "signed shift count %s requires go1.13 or later", y)
+				x.mode = invalid
+				return
+			}
+		case isUntyped(y.typ):
+			// This is incorrect, but preserves pre-existing behavior.
+			// See also bug #47410.
+			check.convertUntyped(y, Typ[Uint])
+			if y.mode == invalid {
+				x.mode = invalid
+				return
+			}
+		default:
+			check.invalidOp(y, _InvalidShiftCount, "shift count %s must be integer", y)
 			x.mode = invalid
 			return
 		}
-	case isUntyped(y.typ):
-		// This is incorrect, but preserves pre-existing behavior.
-		// See also bug #47410.
-		check.convertUntyped(y, Typ[Uint])
-		if y.mode == invalid {
-			x.mode = invalid
-			return
-		}
-	default:
-		check.invalidOp(y, _InvalidShiftCount, "shift count %s must be integer", y)
-		x.mode = invalid
-		return
 	}
 
 	if x.mode == constant_ {
@@ -991,7 +997,7 @@ func (check *Checker) shift(x, y *operand, e ast.Expr, op token.Token) {
 			if b, _ := e.(*ast.BinaryExpr); b != nil {
 				opPos = b.OpPos
 			}
-			check.overflow(x, op, opPos)
+			check.overflow(x, opPos)
 			return
 		}
 
@@ -1171,7 +1177,7 @@ func (check *Checker) binary(x *operand, e ast.Expr, lhs, rhs ast.Expr, op token
 		}
 		x.val = constant.BinaryOp(x.val, op, y.val)
 		x.expr = e
-		check.overflow(x, op, opPos)
+		check.overflow(x, opPos)
 		return
 	}
 

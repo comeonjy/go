@@ -421,8 +421,7 @@ func LoadPackages(ctx context.Context, opts PackageOpts, patterns ...string) (ma
 		}
 
 		// Update the go.mod file's Go version if necessary.
-		modFile := MainModules.ModFile(MainModules.mustGetSingleMainModule())
-		if ld.GoVersion != "" {
+		if modFile := ModFile(); modFile != nil && ld.GoVersion != "" {
 			modFile.AddGoStmt(ld.GoVersion)
 		}
 	}
@@ -605,11 +604,13 @@ func resolveLocalPackage(ctx context.Context, dir string, rs *Requirements) (str
 
 	pkg := pathInModuleCache(ctx, absDir, rs)
 	if pkg == "" {
-		scope := "main module or its selected dependencies"
 		if inWorkspaceMode() {
-			scope = "modules listed in go.work or their selected dependencies"
+			if mr := findModuleRoot(absDir); mr != "" {
+				return "", fmt.Errorf("directory %s is contained in a module that is not one of the workspace modules listed in go.work. You can add the module to the workspace using go work use %s", base.ShortPath(absDir), base.ShortPath(mr))
+			}
+			return "", fmt.Errorf("directory %s outside modules listed in go.work or their selected dependencies", base.ShortPath(absDir))
 		}
-		return "", fmt.Errorf("directory %s outside %s", base.ShortPath(absDir), scope)
+		return "", fmt.Errorf("directory %s outside main module or its selected dependencies", base.ShortPath(absDir))
 	}
 	return pkg, nil
 }
@@ -715,6 +716,12 @@ func ImportFromFiles(ctx context.Context, gofiles []string) {
 		},
 	})
 	requirements = loaded.requirements
+
+	if !ExplicitWriteGoMod {
+		if err := commitRequirements(ctx); err != nil {
+			base.Fatalf("go: %v", err)
+		}
+	}
 }
 
 // DirImportPath returns the effective import path for dir,
@@ -1222,16 +1229,16 @@ func loadFromRoots(ctx context.Context, params loaderParams) *loader {
 //
 // In particular:
 //
-// 	- Modules that provide packages directly imported from the main module are
-// 	  marked as direct, and are promoted to explicit roots. If a needed root
-// 	  cannot be promoted due to -mod=readonly or -mod=vendor, the importing
-// 	  package is marked with an error.
+//   - Modules that provide packages directly imported from the main module are
+//     marked as direct, and are promoted to explicit roots. If a needed root
+//     cannot be promoted due to -mod=readonly or -mod=vendor, the importing
+//     package is marked with an error.
 //
-// 	- If ld scanned the "all" pattern independent of build constraints, it is
-// 	  guaranteed to have seen every direct import. Module dependencies that did
-// 	  not provide any directly-imported package are then marked as indirect.
+//   - If ld scanned the "all" pattern independent of build constraints, it is
+//     guaranteed to have seen every direct import. Module dependencies that did
+//     not provide any directly-imported package are then marked as indirect.
 //
-// 	- Root dependencies are updated to their selected versions.
+//   - Root dependencies are updated to their selected versions.
 //
 // The "changed" return value reports whether the update changed the selected
 // version of any module that either provided a loaded package or may now

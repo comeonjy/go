@@ -210,6 +210,9 @@ func (b *batch) walkFunc(fn *ir.Func) {
 		switch n.Op() {
 		case ir.OLABEL:
 			n := n.(*ir.LabelStmt)
+			if n.Label.IsBlank() {
+				break
+			}
 			if e.labels == nil {
 				e.labels = make(map[*types.Sym]labelState)
 			}
@@ -419,8 +422,6 @@ func (b *batch) paramTag(fn *ir.Func, narg int, f *types.Field) string {
 	}
 
 	if fn.Pragma&ir.UintptrEscapes != 0 {
-		fn.Pragma |= ir.UintptrKeepAlive
-
 		if f.Type.IsUintptr() {
 			if diagnose {
 				base.WarnfAt(f.Pos, "marking %v as escaping uintptr", name())

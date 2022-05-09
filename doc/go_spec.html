@@ -1,6 +1,6 @@
 <!--{
 	"Title": "The Go Programming Language Specification",
-	"Subtitle": "Version of March 30, 2022",
+	"Subtitle": "Version of April 19, 2022",
 	"Path": "/ref/spec"
 }-->
 
@@ -529,6 +529,7 @@ escaped_char     = `\` ( "a" | "b" | "f" | "n" | "r" | "t" | "v" | `\` | "'" | `
 'aa'         // illegal: too many characters
 '\xa'        // illegal: too few hexadecimal digits
 '\0'         // illegal: too few octal digits
+'\400'       // illegal: octal value over 255
 '\uDFFF'     // illegal: surrogate half
 '\U00110000' // illegal: invalid Unicode code point
 </pre>
@@ -1277,7 +1278,8 @@ then the <code>File</code> interface is implemented by both <code>S1</code> and
 <p>
 Every type that is a member of the type set of an interface implements that interface.
 Any given type may implement several distinct interfaces.
-For instance, all types implement the <i>empty interface</i> which stands for the set of all types:
+For instance, all types implement the <i>empty interface</i> which stands for the set
+of all (non-interface) types:
 </p>
 
 <pre>
@@ -1379,7 +1381,7 @@ definition of an interface's type set as follows:
 		of its interface elements.
 	</li>
 
-	<li>The type set of a method specification is the set of types
+	<li>The type set of a method specification is the set of all non-interface types
 		whose method sets include that method.
 	</li>
 
@@ -1388,7 +1390,7 @@ definition of an interface's type set as follows:
 	</li>
 
 	<li>The type set of a term of the form <code>~T</code>
-		is the set of types whose underlying type is <code>T</code>.
+		is the set of all types whose underlying type is <code>T</code>.
 	</li>
 
 	<li>The type set of a <i>union</i> of terms
@@ -1396,6 +1398,15 @@ definition of an interface's type set as follows:
 		is the union of the type sets of the terms.
 	</li>
 </ul>
+
+<p>
+The quantification "the set of all non-interface types" refers not just to all (non-interface)
+types declared in the program at hand, but all possible types in all possible programs, and
+hence is infinite.
+Similarly, given the set of all non-interface types that implement a particular method, the
+intersection of the method sets of those types will contain exactly that method, even if all
+types in the program at hand always pair that method with another method.
+</p>
 
 <p>
 By construction, an interface's type set never contains an interface type.
@@ -1879,7 +1890,7 @@ A4, func(int, float64) *[]string, and A5
 B0 and C0
 D0[int, string] and E0
 []int and []int
-struct{ a, b *T5 } and struct{ a, b *T5 }
+struct{ a, b *B5 } and struct{ a, b *B5 }
 func(x int, y float64) *[]string, func(int, float64) (result *[]string), and A5
 </pre>
 

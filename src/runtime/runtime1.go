@@ -38,9 +38,13 @@ func gotraceback() (level int32, all, crash bool) {
 	_g_ := getg()
 	t := atomic.Load(&traceback_cache)
 	crash = t&tracebackCrash != 0
-	all = _g_.m.throwing > 0 || t&tracebackAll != 0
+	all = _g_.m.throwing >= throwTypeUser || t&tracebackAll != 0
 	if _g_.m.traceback != 0 {
 		level = int32(_g_.m.traceback)
+	} else if _g_.m.throwing >= throwTypeRuntime {
+		// Always include runtime frames in runtime throws unless
+		// otherwise overridden by m.traceback.
+		level = 2
 	} else {
 		level = int32(t >> tracebackShift)
 	}
@@ -53,6 +57,7 @@ var (
 )
 
 // nosplit for use in linux startup sysargs
+//
 //go:nosplit
 func argv_index(argv **byte, i int32) *byte {
 	return *(**byte)(add(unsafe.Pointer(argv), uintptr(i)*goarch.PtrSize))
@@ -438,6 +443,7 @@ func setTraceback(level string) {
 // int64 division is lowered into _divv() call on 386, which does not fit into nosplit functions.
 // Handles overflow in a time-specific manner.
 // This keeps us within no-split stack limits on 32-bit processors.
+//
 //go:nosplit
 func timediv(v int64, div int32, rem *int32) int32 {
 	res := int32(0)
@@ -493,18 +499,21 @@ func reflect_typelinks() ([]unsafe.Pointer, [][]int32) {
 }
 
 // reflect_resolveNameOff resolves a name offset from a base pointer.
+//
 //go:linkname reflect_resolveNameOff reflect.resolveNameOff
 func reflect_resolveNameOff(ptrInModule unsafe.Pointer, off int32) unsafe.Pointer {
 	return unsafe.Pointer(resolveNameOff(ptrInModule, nameOff(off)).bytes)
 }
 
 // reflect_resolveTypeOff resolves an *rtype offset from a base type.
+//
 //go:linkname reflect_resolveTypeOff reflect.resolveTypeOff
 func reflect_resolveTypeOff(rtype unsafe.Pointer, off int32) unsafe.Pointer {
 	return unsafe.Pointer((*_type)(rtype).typeOff(typeOff(off)))
 }
 
 // reflect_resolveTextOff resolves a function pointer offset from a base type.
+//
 //go:linkname reflect_resolveTextOff reflect.resolveTextOff
 func reflect_resolveTextOff(rtype unsafe.Pointer, off int32) unsafe.Pointer {
 	return (*_type)(rtype).textOff(textOff(off))
@@ -512,18 +521,21 @@ func reflect_resolveTextOff(rtype unsafe.Pointer, off int32) unsafe.Pointer {
 }
 
 // reflectlite_resolveNameOff resolves a name offset from a base pointer.
+//
 //go:linkname reflectlite_resolveNameOff internal/reflectlite.resolveNameOff
 func reflectlite_resolveNameOff(ptrInModule unsafe.Pointer, off int32) unsafe.Pointer {
 	return unsafe.Pointer(resolveNameOff(ptrInModule, nameOff(off)).bytes)
 }
 
 // reflectlite_resolveTypeOff resolves an *rtype offset from a base type.
+//
 //go:linkname reflectlite_resolveTypeOff internal/reflectlite.resolveTypeOff
 func reflectlite_resolveTypeOff(rtype unsafe.Pointer, off int32) unsafe.Pointer {
 	return unsafe.Pointer((*_type)(rtype).typeOff(typeOff(off)))
 }
 
 // reflect_addReflectOff adds a pointer to the reflection offset lookup map.
+//
 //go:linkname reflect_addReflectOff reflect.addReflectOff
 func reflect_addReflectOff(ptr unsafe.Pointer) int32 {
 	reflectOffsLock()

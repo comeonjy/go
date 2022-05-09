@@ -10,9 +10,9 @@ import (
 	"bytes"
 	"cmd/internal/bio"
 	"cmd/internal/goobj"
+	"cmd/internal/notsha256"
 	"cmd/internal/objabi"
 	"cmd/internal/sys"
-	"crypto/sha1"
 	"encoding/binary"
 	"fmt"
 	"io"
@@ -448,19 +448,19 @@ func contentHash64(s *LSym) goobj.Hash64Type {
 // Depending on the category of the referenced symbol, we choose
 // different hash algorithms such that the hash is globally
 // consistent.
-//  - For referenced content-addressable symbol, its content hash
-//    is globally consistent.
-//  - For package symbol and builtin symbol, its local index is
-//    globally consistent.
-//  - For non-package symbol, its fully-expanded name is globally
-//    consistent. For now, we require we know the current package
-//    path so we can always expand symbol names. (Otherwise,
-//    symbols with relocations are not considered hashable.)
+//   - For referenced content-addressable symbol, its content hash
+//     is globally consistent.
+//   - For package symbol and builtin symbol, its local index is
+//     globally consistent.
+//   - For non-package symbol, its fully-expanded name is globally
+//     consistent. For now, we require we know the current package
+//     path so we can always expand symbol names. (Otherwise,
+//     symbols with relocations are not considered hashable.)
 //
 // For now, we assume there is no circular dependencies among
 // hashed symbols.
 func (w *writer) contentHash(s *LSym) goobj.HashType {
-	h := sha1.New()
+	h := notsha256.New()
 	var tmp [14]byte
 
 	// Include the size of the symbol in the hash.
@@ -726,11 +726,13 @@ func genFuncInfoSyms(ctxt *Link) {
 		}
 
 		o.Write(&b)
+		p := b.Bytes()
 		isym := &LSym{
 			Type:   objabi.SDATA, // for now, I don't think it matters
 			PkgIdx: goobj.PkgIdxSelf,
 			SymIdx: symidx,
-			P:      append([]byte(nil), b.Bytes()...),
+			P:      append([]byte(nil), p...),
+			Size:   int64(len(p)),
 		}
 		isym.Set(AttrIndexed, true)
 		symidx++

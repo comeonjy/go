@@ -235,6 +235,11 @@ func testFiles(t *testing.T, sizes Sizes, filenames []string, srcs [][]byte, man
 		t.Fatal(err)
 	}
 
+	if manual && *goVersion != "" {
+		// goVersion overrides -lang for manual tests.
+		conf.GoVersion = *goVersion
+	}
+
 	// TODO(gri) remove this or use flag mechanism to set mode if still needed
 	if strings.HasSuffix(filenames[0], ".go1") {
 		// TODO(rfindley): re-enable this test by using GoVersion.
@@ -314,7 +319,7 @@ func testFiles(t *testing.T, sizes Sizes, filenames []string, srcs [][]byte, man
 // (and a separating "--"). For instance, to test the package made
 // of the files foo.go and bar.go, use:
 //
-// 	go test -run Manual -- foo.go bar.go
+//	go test -run Manual -- foo.go bar.go
 //
 // If no source arguments are provided, the file testdata/manual.go
 // is used instead.

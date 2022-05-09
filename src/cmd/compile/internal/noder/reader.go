@@ -153,10 +153,6 @@ type itabInfo2 struct {
 func setType(n ir.Node, typ *types.Type) {
 	n.SetType(typ)
 	n.SetTypecheck(1)
-
-	if name, ok := n.(*ir.Name); ok {
-		name.Ntype = ir.TypeNode(name.Type())
-	}
 }
 
 func setValue(name *ir.Name, val constant.Value) {
@@ -282,11 +278,13 @@ func (pr *pkgReader) pkgIdx(idx int) *types.Pkg {
 
 func (r *reader) doPkg() *types.Pkg {
 	path := r.String()
-	if path == "builtin" {
-		return types.BuiltinPkg
-	}
-	if path == "" {
+	switch path {
+	case "":
 		path = r.p.PkgPath()
+	case "builtin":
+		return types.BuiltinPkg
+	case "unsafe":
+		return types.UnsafePkg
 	}
 
 	name := r.String()
@@ -442,7 +440,19 @@ func (r *reader) doTyp() *types.Type {
 		return r.structType()
 	case pkgbits.TypeInterface:
 		return r.interfaceType()
+	case pkgbits.TypeUnion:
+		return r.unionType()
 	}
+}
+
+func (r *reader) unionType() *types.Type {
+	terms := make([]*types.Type, r.Len())
+	tildes := make([]bool, len(terms))
+	for i := range terms {
+		tildes[i] = r.Bool()
+		terms[i] = r.typ()
+	}
+	return types.NewUnion(terms, tildes)
 }
 
 func (r *reader) interfaceType() *types.Type {
@@ -577,10 +587,6 @@ func (pr *pkgReader) objIdx(idx int, implicits, explicits []*types.Type) ir.Node
 		if pri, ok := objReader[sym]; ok {
 			return pri.pr.objIdx(pri.idx, nil, explicits)
 		}
-		if haveLegacyImports {
-			assert(len(explicits) == 0)
-			return typecheck.Resolve(ir.NewIdent(src.NoXPos, sym))
-		}
 		base.Fatalf("unresolved stub: %v", sym)
 	}
 
@@ -635,7 +641,7 @@ func (pr *pkgReader) objIdx(idx int, implicits, explicits []*types.Type) ir.Node
 
 	case pkgbits.ObjFunc:
 		if sym.Name == "init" {
-			sym = renameinit()
+			sym = Renameinit()
 		}
 		name := do(ir.ONAME, true)
 		setType(name, r.signature(sym.Pkg, nil))
@@ -1632,7 +1638,7 @@ func (r *reader) expr() (res ir.Node) {
 		if typ, ok := typ.(*ir.DynamicType); ok && typ.Op() == ir.ODYNAMICTYPE {
 			return typed(typ.Type(), ir.NewDynamicTypeAssertExpr(pos, ir.ODYNAMICDOTTYPE, x, typ.X))
 		}
-		return typecheck.Expr(ir.NewTypeAssertExpr(pos, x, typ.(ir.Ntype)))
+		return typecheck.Expr(ir.NewTypeAssertExpr(pos, x, typ.Type()))
 
 	case exprUnaryOp:
 		op := r.op()
@@ -1722,7 +1728,7 @@ func (r *reader) compLit() ir.Node {
 		*elemp = wrapName(r.pos(), r.expr())
 	}
 
-	lit := typecheck.Expr(ir.NewCompLitExpr(pos, ir.OCOMPLIT, ir.TypeNode(typ), elems))
+	lit := typecheck.Expr(ir.NewCompLitExpr(pos, ir.OCOMPLIT, typ, elems))
 	if typ0.IsPtr() {
 		lit = typecheck.Expr(typecheck.NodAddrAt(pos, lit))
 		lit.SetType(typ0)
@@ -1960,12 +1966,6 @@ func InlineCall(call *ir.CallExpr, fn *ir.Func, inlIndex int) *ir.InlinedCallExp
 
 	pri, ok := bodyReader[fn]
 	if !ok {
-		// Assume it's an imported function or something that we don't
-		// have access to in quirks mode.
-		if haveLegacyImports {
-			return nil
-		}
-
 		base.FatalfAt(call.Pos(), "missing function body for call to %v", fn)
 	}
 

@@ -20,10 +20,11 @@ type IntegerType int
 
 // Pointer represents a pointer to an arbitrary type. There are four special operations
 // available for type Pointer that are not available for other types:
-//	- A pointer value of any type can be converted to a Pointer.
-//	- A Pointer can be converted to a pointer value of any type.
-//	- A uintptr can be converted to a Pointer.
-//	- A Pointer can be converted to a uintptr.
+//   - A pointer value of any type can be converted to a Pointer.
+//   - A Pointer can be converted to a pointer value of any type.
+//   - A uintptr can be converted to a Pointer.
+//   - A Pointer can be converted to a uintptr.
+//
 // Pointer therefore allows a program to defeat the type system and read and write
 // arbitrary memory. It should be used with extreme care.
 //
@@ -187,6 +188,7 @@ type Pointer *ArbitraryType
 // The size does not include any memory possibly referenced by x.
 // For instance, if x is a slice, Sizeof returns the size of the slice
 // descriptor, not the size of the memory referenced by the slice.
+// For a struct, the size includes any padding introduced by field alignment.
 // The return value of Sizeof is a Go constant.
 func Sizeof(x ArbitraryType) uintptr
 
