@@ -76,6 +76,7 @@ const (
 // blocks until the mutex is available.
 func (m *Mutex) Lock() {
 	// Fast path: grab unlocked mutex.
+	// 尝试简单加锁
 	if atomic.CompareAndSwapInt32(&m.state, 0, mutexLocked) {
 		if race.Enabled {
 			race.Acquire(unsafe.Pointer(m))
@@ -125,21 +126,23 @@ func (m *Mutex) lockSlow() {
 			// Active spinning makes sense.
 			// Try to set mutexWoken flag to inform Unlock
 			// to not wake other blocked goroutines.
-			// 如果没有g被唤醒，且有g在阻塞等待，则尝试设置mutexWoken表示有人被唤醒，阻止其他g被唤醒
+			// 如果没有g被唤醒，且有g在阻塞等待，则尝试设置mutexWoken标识位表示有人被唤醒，阻止其他g被唤醒（我在自旋等锁，解锁了就不要释放信号量了，其他人别和我抢啊）
 			if !awoke && old&mutexWoken == 0 && old>>mutexWaiterShift != 0 &&
 				atomic.CompareAndSwapInt32(&m.state, old, old|mutexWoken) {
-				// 当前g设置mutexWoken成功的标识
+				// 当前g设置mutexWoken成功的标识（设置成功表示我是当前唯一唤醒的）
 				awoke = true
 			}
 			// 自旋等待
 			runtime_doSpin()
 			iter++
+			// 等待完，重新获取state
 			old = m.state
 			continue
 		}
+		// 如果已经解锁，或者锁变成饥饿模式，或者不满足自旋条件，则跳过自旋过程
 		new := old
 		// Don't try to acquire starving mutex, new arriving goroutines must queue.
-		// 如果当前锁处于饥饿模式，就不要尝试抢锁了，老老实实排队
+		// 如果当前锁处于饥饿模式，就不要尝试抢锁了，老老实实排队，普通模式就尝试加锁
 		if old&mutexStarving == 0 {
 			new |= mutexLocked
 		}
@@ -155,13 +158,14 @@ func (m *Mutex) lockSlow() {
 		if starving && old&mutexLocked != 0 {
 			new |= mutexStarving
 		}
-		// 如果当前g已经拿到了唤醒标识
+		// 如果当前g已经拿到了唤醒标识，则清除mutexWoken位
 		if awoke {
 			// The goroutine has been woken from sleep,
 			// so we need to reset the flag in either case.
 			if new&mutexWoken == 0 {
 				throw("sync: inconsistent mutex state")
 			}
+			// 将mutexWoken位清为0
 			new &^= mutexWoken
 		}
 		// 尝试设置标识
@@ -175,6 +179,7 @@ func (m *Mutex) lockSlow() {
 			if waitStartTime == 0 {
 				waitStartTime = runtime_nanotime()
 			}
+			// 没抢到锁，阻塞
 			runtime_SemacquireMutex(&m.sema, queueLifo, 1)
 			// 计算是否饥饿：等待时间超过1ms
 			starving = starving || runtime_nanotime()-waitStartTime > starvationThresholdNs
@@ -190,6 +195,7 @@ func (m *Mutex) lockSlow() {
 				}
 
 				// 如果当前g没有饥饿，或者阻塞等待数为1，则加锁，阻塞人数减1，将锁恢复为普通模式，然后返回
+				// 否则加锁，阻塞人数减1
 				delta := int32(mutexLocked - 1<<mutexWaiterShift)
 				if !starving || old>>mutexWaiterShift == 1 {
 					// Exit starvation mode.
